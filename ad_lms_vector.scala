@@ -388,6 +388,23 @@ object TEST1 {
 	    	{ (x:TensorR) => x.d += new Vector(f1(x.x.data), dim0) }
 	    }
 
+	     def FUN2(dim0: Int)(f: ((TensorR, TensorR)) => Unit): (((TensorR, TensorR)) => Unit) = {
+	    	// val dim0: Int = 1 // FIXME: what is the best way to carry this known dimensional information?
+	    	val f1 = fun { t: Rep[(Array[Double], Array[Double])] =>
+	    		val deltaVar1: Vector = Vector.zeros(dim0)
+	    		val deltaVar2: Vector = Vector.zeros(dim0)
+
+	    		f((new TensorR(new Vector(t._1, dim0), deltaVar1), new TensorR(new Vector(t._2, dim0), deltaVar2)))
+	    		(deltaVar1.data, deltaVar2.data)
+	    	};
+	    	{ t:(TensorR, TensorR) => 
+	    		val new_t = f1(t._1.x.data, t._2.x.data)
+	    		t._1.d += new Vector(new_t._1, dim0)
+	    		t._2.d += new Vector(new_t._2, dim0)
+	    	}
+	    }
+
+
 	    def RST(a: => Unit @diff) = continuations.reset { a; () }
 
     	@virtualize
@@ -408,12 +425,12 @@ object TEST1 {
 	    }
 
 	    @virtualize
-	    def LOOPC(init: TensorR)(c: Rep[Int])(b: TensorR => TensorR @diff): TensorR @diff = shift { k:(TensorR => Unit) =>
+	    def LOOPC(init: ((TensorR, TensorR)))(c: Rep[Int])(b: ((TensorR, TensorR)) => (TensorR, TensorR) @diff): (TensorR, TensorR) @diff = shift { k:(((TensorR, TensorR)) => Unit) =>
 	      
 	      var gc = 0
 
-	      lazy val loop: TensorR => Unit = FUN (init.x.dim0){ (x: TensorR) =>
-	        if (gc < c) { gc += 1; RST(loop(b(x))) } else RST(k(x))
+	      lazy val loop: ((TensorR, TensorR)) => Unit = FUN2 (init._1.x.dim0){ (xs: (TensorR, TensorR)) =>
+	        if (gc < c) { gc += 1; RST(loop(b(xs))) } else RST(k(xs))
 	      }
 	      loop(init)
 	    }
@@ -837,19 +854,28 @@ object TEST1 {
 	    	def snippet(a: Rep[String]): Rep[Unit] = {
 	    		// use random array as input
 	    		val length = 2
-	    		val v = Vector.randinit(length)
-	    		v.print()
+	    		val vs = (
+	    			TensorR.Tensor(Vector.randinit(length)),
+	    			TensorR.Tensor(Vector.randinit(length))
+	    		)
+	    		vs._1.x.print()
+	    		vs._2.x.print()
 
 	    		val half = (new TensorR(Vector.halves(length), Vector.zeros(length)))
 	    		// calculate gradient
-	    		val grad = gradR(t => {val y = LOOP(t)(t => t.x.data(0) > 0.1)(t => t * half)
-	    							   y.sum() })(v)
+	    		val grad = gradR(ts => {val ys = LOOPC(vs)(3)( t => (t._1 * half, t._2 * half) )
+	    							   ys._1.sum()+ys._2.sum() })(Vector.zeros(1))
 	    		// show gradient
-	    		grad.print()
+	    		// grad.print()
 	    		println("Tensor in closure can also accumulate gradient, which is important")
+
+	    		println("Printout gradient")
 	    		half.d.print()
+	    		vs._1.d.print()
+	    		vs._2.d.print()
 	    	}
 	    }
+	  array4.eval("")
 
 		// println("test LOOP gradient")
 		import java.io.PrintWriter;
@@ -859,7 +885,7 @@ object TEST1 {
 		//p.println(array4.code)
 		//p.flush()
 	    //array4.eval("abc" )
-
+/*
 	    val array4_1 = new DslDriverC[String, Unit] with VectorExp {
 
 	    	def snippet(a: Rep[String]): Rep[Unit] = {
@@ -878,7 +904,7 @@ object TEST1 {
 	    		half.d.print()
 	    	}
 	    }
-
+*/
 	    // println("test LOOP gradient")
 	    //array4_1.eval("abc")
 
