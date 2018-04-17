@@ -24,7 +24,17 @@ import java.io.File;
 class NTMtest extends FunSuite {
 	val ntm_test = new DslDriverC[String, Unit] with TensorExp with ScannerLowerExp {
 		class NTM {}
-		class Memory {}
+		class Memory (val N: Int, val M: Int) {
+			// initialize addressing parameters
+			val bias = Tensor.rand(2.0f/sqrt(N + M), N, M)
+			val memory = TensorR(bias.copy(bias))
+
+			def read(w: TensorR) = w * memory
+
+			def write(w: TensorR, e: TensorR, a: TensorR): Rep[Unit] = {
+				
+			}
+		}
 		class BaseHead {}
 		class ReadHead extends BaseHead {}
 		class WriteHead extends BaseHead {}
@@ -33,7 +43,7 @@ class NTMtest extends FunSuite {
 		@virtualize
     def snippet(a: Rep[String]): Rep[Unit] = {
     	// copy task
-    	
+
     }
 	}
 }
