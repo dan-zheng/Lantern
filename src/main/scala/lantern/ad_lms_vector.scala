@@ -421,6 +421,15 @@ trait TensorExp extends Dsl {
       this.map(x => x - logsum)
     }
 
+    // add softmax
+    @virtualize
+    def softmax() = {
+      val _max = this.max
+      val _exp = this.map(x => Math.exp(x - _max).toFloat)
+      val sum = _exp.fold(0.0f)(+)
+      _exp.map(x => x / sum)
+    }
+
     @virtualize
     def nllLoss(target: Rep[Int]) = {
       assert(this.nbDims == 1)
@@ -700,6 +709,14 @@ trait TensorExp extends Dsl {
       for (i <- DataLoop(dims0M * dims1M)) {
         if (this.isScalar) { data(0) = data(0) + oneMinusThenMult(a.getAt(i)) * b.getAt(i) }
         else { data(i) = data(i) + oneMinusThenMult(a.getAt(i)) * b.getAt(i) }
+      }
+    }
+
+    def add_multi_var_chain_softmax(x: Tensor, d: Tensor) = {
+      val sum_d = d.sum(0)
+      val sum_x_times_d = (x * d).sum(0)
+      for (i <- DataLoop(this.nbElem)) {
+        data(i) = data(i) + x(i) * (sum_d - sum_x_times_d)
       }
     }
 
@@ -1121,10 +1138,20 @@ trait TensorExp extends Dsl {
 
       //y.d.print("log")
       val s = y.d.sum().data(0)
+      // @TODO: is this correct???
+      // update or reassign???
       for (i <- 0 until y.x.nbElem: Rep[Range]) {
         this.d.data(i) = y.d.data(i) - Math.exp(y.x.data(i)).toFloat * s
       }
     }
+
+    // add softmax
+    def softmax(): TensorR @diff = shift { (k: TensorR => Unit) =>
+      val y = TensorR(x.softmax()); k(y)
+      // @TODO: put gradients for softmax
+      this.d.add_multi_var_chain_softmax(y.x, y.d)
+    }
+
 
     def resize(dims: Int*): TensorR @diff = shift { (k: TensorR => Unit) =>
       k(new TensorR(this.x.resize(dims : _*), this.d.resize(dims : _*)))

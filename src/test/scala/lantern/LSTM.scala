@@ -114,6 +114,7 @@ class LSTMTest extends FunSuite {
         in.append(thprev)
         in.append(tcprev)
 
+        // forward() function
         val outputs = LOOPSM(in)(inputs.length){i => t =>
 
           // get input as one-hot tensor
