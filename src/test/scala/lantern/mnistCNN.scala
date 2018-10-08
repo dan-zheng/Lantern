@@ -239,7 +239,7 @@ class MnistCNN extends FunSuite {
     cnn_file.flush()
   }
 
-  val mnist2  = new DslDriverC[String, Unit] with NNModule with ScannerLowerExp {
+  val mnist2  = new LanternDriverC[String, Unit] with NNModule with ScannerLowerExp {
 
     @virtualize
     def snippet(a: Rep[String]): Rep[Unit] = {

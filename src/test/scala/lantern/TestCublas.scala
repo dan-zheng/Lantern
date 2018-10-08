@@ -47,4 +47,20 @@ class TestCublas extends LanternFunSuite {
     runTest(mmdot)
   }
 
+  testGPU("print") {
+    val test = new LanternDriverCublas[String, Unit] {
+      @virtualize
+      def snippet(x: Rep[String]): Rep[Unit] = {
+        val m1 = Tensor.fromData(NSeq(2, 3), 1, 2, 3, 4, 5, 6)
+        // val m2 = Tensor.fromData(NSeq(3, 1), 2, 3, 4)
+        // val expected = Tensor.fromData(NSeq(2, 1), 20, 47)
+        // Tensor.assertEqual(m1.dot(m2), expected)
+        // withBackend(new BackendNative)(m1) { x => x.print() }
+        withCPU(m1) { x =>
+          x.print()
+        }
+      }
+    }
+    runTest(test)
+  }
 }

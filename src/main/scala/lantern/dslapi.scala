@@ -8,7 +8,7 @@ import scala.virtualization.lms.common._
 import scala.collection.{Seq => NSeq}
 
 // TODO: clean up at least, maybe add to LMS?
-trait UtilOps extends Base { this: Dsl =>
+trait UtilOps extends Base { this: DslOps =>
   type Typ[T] = Manifest[T]
   def typ[T:Typ] = manifest[T]
   def manifestTyp[T:Typ] = manifest[T]
@@ -58,7 +58,7 @@ trait CGenUtilOps extends CGenBase {
   }
 }
 
-trait Dsl extends PrimitiveOps with NumericOpsExtra with BooleanOps
+trait DslOps extends PrimitiveOps with NumericOpsExtra with BooleanOps
     with LiftString with LiftPrimitives with LiftNumeric with LiftBoolean
     with IfThenElse with Equal with RangeOps with OrderingOps with MiscOps with ArrayOps with StringOps
     with SeqOps with Functions with While with StaticData
@@ -71,20 +71,6 @@ trait Dsl extends PrimitiveOps with NumericOpsExtra with BooleanOps
   }
   // override def boolean_and(lhs: Rep[Boolean], rhs: Rep[Boolean])(implicit pos: SourceContext): Rep[Boolean] = __ifThenElse(lhs, rhs, unit(false))
 
-  // Tensor data operations.
-  implicit def repArrayToTensorOps[T: Manifest](a: Rep[Array[T]]) = new TensorOpsCls(a)
-  object NewTensor {
-    // Allocate a new tensor with the specified scalar count.
-    def apply[T: Manifest](scalarCount: Rep[Int]): Rep[Array[T]] = tensor_data_new(scalarCount)
-  }
-  class TensorOpsCls[T: Manifest](a: Rep[Array[T]]) {
-    def apply(index: Rep[Int])(implicit pos: SourceContext) = tensor_data_apply(a, index)
-    def update(index: Rep[Int], y: Rep[T])(implicit pos: SourceContext) = tensor_data_update(a, index, y)
-  }
-  def tensor_data_new[T: Manifest](scalarCount: Rep[Int]): Rep[Array[T]]
-  def tensor_data_apply[T: Manifest](x: Rep[Array[T]], index: Rep[Int])(implicit pos: SourceContext): Rep[T]
-  def tensor_data_update[T: Manifest](x: Rep[Array[T]], index: Rep[Int], y: Rep[T])(implicit pos: SourceContext): Rep[Unit]
-
   // Raw code/comment operations.
   def generateRawCode(s: String): Rep[Unit]
   def generateRawComment(s: String): Rep[Unit]
@@ -94,36 +80,13 @@ trait Dsl extends PrimitiveOps with NumericOpsExtra with BooleanOps
   def mutableStaticData[T:Manifest](x: T): Rep[T]
 }
 
-trait DslExp extends Dsl
+trait DslExp extends DslOps
     with PrimitiveOpsExpOpt with NumericOpsExpOpt with NumericOpsExtraExp with BooleanOpsExp
     with IfThenElseExpOpt with EqualExpBridgeOpt with RangeOpsExp with OrderingOpsExp
     with MiscOpsExp with EffectExp with ArrayOpsExpOpt with StringOpsExp with SeqOpsExp
     with FunctionsRecursiveExp with WhileExp with StaticDataExp with ObjectOpsExpOpt
     with UtilOpsExp with UncheckedOpsExp with MathOpsExp
     with TupleOps with TupledFunctionsExp with CastingOpsExp {
-
-  case class TensorNew[T: Manifest](scalarCount: Rep[Int]) extends Def[Array[T]] {
-    val m = manifest[T]
-  }
-  case class TensorApply[T: Manifest](a: Exp[Array[T]], index: Exp[Int]) extends Def[T] {
-    val m = manifest[T]
-  }
-  case class TensorUpdate[T: Manifest](a: Exp[Array[T]], index: Exp[Int], y: Exp[T]) extends Def[Unit] {
-    val m = manifest[T]
-  }
-  def tensor_data_new[T: Manifest](scalarCount: Exp[Int]) = reflectMutable(TensorNew(scalarCount))
-  // Copied from `array_apply` below.
-  def tensor_data_apply[T: Manifest](x: Exp[Array[T]], index: Exp[Int])(implicit pos: SourceContext): Exp[T] =
-    (x, index) match {
-      case (Def(StaticData(x: Array[T])), Const(index)) =>
-        val y = x(index)
-        if (y.isInstanceOf[Int]) unit(y) else staticData(y)
-      // FIXME: `TensorApply` should not be effectful.
-      case _ => reflectEffect(TensorApply(x, index))
-    }
-  // Copied from `array_update` below.
-  def tensor_data_update[T: Manifest](x: Exp[Array[T]], index: Exp[Int], y: Exp[T])(implicit pos: SourceContext) =
-    reflectEffect(TensorUpdate(x, index, y))
 
   override def boolean_or(lhs: Exp[Boolean], rhs: Exp[Boolean])(implicit pos: SourceContext) : Exp[Boolean] = lhs match {
     case Const(false) => rhs
@@ -206,6 +169,48 @@ trait DslExp extends Dsl
   }
 }
 
+trait TensorOps extends DslOps {
+  implicit def repArrayToTensorOps[T: Manifest](a: Rep[Array[T]]) = new TensorOpsCls(a)
+  object NewTensor {
+    // Allocate a new tensor with the specified scalar count.
+    def apply[T: Manifest](scalarCount: Rep[Int]): Rep[Array[T]] = tensor_data_new(scalarCount)
+  }
+  class TensorOpsCls[T: Manifest](a: Rep[Array[T]]) {
+    def apply(index: Rep[Int])(implicit pos: SourceContext) = tensor_data_apply(a, index)
+    def update(index: Rep[Int], y: Rep[T])(implicit pos: SourceContext) = tensor_data_update(a, index, y)
+  }
+
+  def tensor_data_new[T: Manifest](scalarCount: Rep[Int]): Rep[Array[T]]
+  def tensor_data_apply[T: Manifest](x: Rep[Array[T]], index: Rep[Int])(implicit pos: SourceContext): Rep[T]
+  def tensor_data_update[T: Manifest](x: Rep[Array[T]], index: Rep[Int], y: Rep[T])(implicit pos: SourceContext): Rep[Unit]
+}
+
+trait TensorDslExp extends TensorDsl with TensorOps with DslExp {
+  case class TensorNew[T: Manifest](scalarCount: Rep[Int]) extends Def[Array[T]] {
+    val m = manifest[T]
+  }
+  case class TensorApply[T: Manifest](a: Exp[Array[T]], index: Exp[Int]) extends Def[T] {
+    val m = manifest[T]
+  }
+  case class TensorUpdate[T: Manifest](a: Exp[Array[T]], index: Exp[Int], y: Exp[T]) extends Def[Unit] {
+    val m = manifest[T]
+  }
+
+  def tensor_data_new[T: Manifest](scalarCount: Exp[Int]) = reflectMutable(TensorNew(scalarCount))
+  // Copied from `array_apply` in `Dsl`.
+  def tensor_data_apply[T: Manifest](x: Exp[Array[T]], index: Exp[Int])(implicit pos: SourceContext): Exp[T] =
+    (x, index) match {
+      case (Def(StaticData(x: Array[T])), Const(index)) =>
+        val y = x(index)
+        if (y.isInstanceOf[Int]) unit(y) else staticData(y)
+      // FIXME: `TensorApply` should not be effectful.
+      case _ => reflectEffect(TensorApply(x, index))
+    }
+  // Copied from `array_update` in `Dsl`.
+  def tensor_data_update[T: Manifest](x: Exp[Array[T]], index: Exp[Int], y: Exp[T])(implicit pos: SourceContext) =
+    reflectEffect(TensorUpdate(x, index, y))
+}
+
 trait DslGenScala extends ScalaGenNumericOps
     with ScalaGenPrimitiveOps with ScalaGenBooleanOps with ScalaGenIfThenElse
     with ScalaGenEqual with ScalaGenRangeOps with ScalaGenOrderingOps
@@ -227,12 +232,14 @@ trait DslGenScala extends ScalaGenNumericOps
   }
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    /*
     case t@TensorNew(scalarCount) =>
       emitNode(sym, ArrayNew(scalarCount)(t.m))
     case t@TensorApply(x, index) =>
       emitNode(sym, ArrayApply(x, index)(t.m))
     case t@TensorUpdate(x, index, y) =>
       emitNode(sym, ArrayUpdate(x, index, y)(t.m))
+    */
     case afs@ArrayFromSeq(xs) => stream.println(remap(afs.m) + " " + quote(sym) + "[" + xs.length + "] = {" + (xs mkString ",") + "}; // ;)")
     case Assign(Variable(a), b) =>
       emitAssignment(a.asInstanceOf[Sym[Variable[Any]]], quote(b))
@@ -383,12 +390,14 @@ trait DslGenBase extends CGenNumericOpsExtra
   }
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    /*
     case t@TensorNew(scalarCount) =>
       emitNode(sym, ArrayNew(scalarCount)(t.m))
     case t@TensorApply(x, index) =>
       emitNode(sym, ArrayApply(x, index)(t.m))
     case t@TensorUpdate(x, index, y) =>
       emitNode(sym, ArrayUpdate(x, index, y)(t.m))
+    */
     case Error(s) => stream.println("assert(false && " + quote(s) + ");")
     case afs@ArrayFromSeq(xs) =>
       stream.println(remap(afs.m) + " " + quote(sym) + "[" + xs.length + "] = {" + (xs map quote mkString ",") + "}; // ;)")
@@ -503,11 +512,13 @@ trait DslGenBase extends CGenNumericOpsExtra
 
 trait DslGenC extends DslGenBase {
   val IR: DslExp
+  // val IR: TensorDslExp
   import IR._
 }
 
 trait DslGenCublas extends DslGenBase {
   val IR: DslExp
+  // val IR: TensorDslExp
   import IR._
 
   // Allocate GPU memory.
@@ -531,6 +542,7 @@ trait DslGenCublas extends DslGenBase {
   }
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    /*
     case t@TensorNew(scalarCount) =>
       val scalarType = remap(t.m)
       stream.println(scalarType + "* " + quote(sym) + " = " + getCudaMallocArenaString(quote(scalarCount), scalarType))
@@ -542,8 +554,8 @@ trait DslGenCublas extends DslGenBase {
       // emitValDef(sym, "arrayApply<<<1, 1>>>(" + quote(x) + ", " + quote(index) + ")")
     case t@TensorUpdate(x, index, y) =>
       stream.println("arrayUpdate<<<1, 1>>>(" + quote(x) + ", " + quote(index) + ", " + quote(y) + ");")
-    case _ =>
-      super.emitNode(sym, rhs)
+    */
+    case _ => super.emitNode(sym, rhs)
   }
 
   override def templateHeaders: NSeq[String] =
@@ -585,6 +597,7 @@ trait DslGenCublas extends DslGenBase {
 
 trait DslGenCudnn extends DslGenCublas {
   val IR: DslExp
+  // val IR: TensorDslExp
   import IR._
 
   override def templateHeaders: NSeq[String] = super.templateHeaders ++ NSeq("<cudnn.h>")
@@ -601,7 +614,7 @@ trait DslGenCudnn extends DslGenCublas {
     """.stripMargin
 }
 
-abstract class DslDriverScala[A: Manifest, B: Manifest] extends Dsl with DslExp with CompileScala { self =>
+abstract class DslDriverScala[A: Manifest, B: Manifest] extends DslOps with DslExp with CompileScala { self =>
   val codegen = new DslGenScala {
     val IR: self.type = self
   }
@@ -616,7 +629,7 @@ abstract class DslDriverScala[A: Manifest, B: Manifest] extends Dsl with DslExp 
   def eval(x: A): B = f(x)
 }
 
-abstract class DslDriverBase[A: Manifest, B: Manifest] extends Dsl with DslExp { self =>
+abstract class DslDriverBase[A: Manifest, B: Manifest] extends DslOps with DslExp { self =>
   // The C-like code generator.
   val codegen: DslGenBase {
     val IR: self.type
@@ -703,12 +716,19 @@ abstract class DslDriverCudnn[A: Manifest, B: Manifest] extends DslDriverBase[A,
   * A wrapper around `DslDriverBase` that provides a `wrapper` function that performs backend setup/cleanup.
   * Extend this instead of `DslDriverBase` for correct backend management.
   */
-trait LanternDriver[A, B] extends DslDriverBase[A, B] with TensorExp {
+// trait LanternDriver[A, B] extends DslDriverBase[A, B] with TensorExp { self =>
+trait LanternDriver[A, B] extends DslDriverBase[A, B] with TensorDslExp { self =>
   // Hacky workaround to support trait type parameters with context bounds.
   // `trait LanternDriver[A: Manifest, B: Manifest]` doesn't work.
   // These must be overridden in subclasses.
   implicit def manifestA: Manifest[A]
   implicit def manifestB: Manifest[B]
+
+  /*
+  override val codegen = new self.type {
+
+  }
+  */
 
   def wrapper(x: Rep[A]): Rep[B] = {
     generateRawComment("Backend setup.")
@@ -727,17 +747,64 @@ trait LanternDriver[A, B] extends DslDriverBase[A, B] with TensorExp {
   }
 }
 
-abstract class LanternDriverC[A: Manifest, B: Manifest] extends DslDriverC[A, B] with LanternDriver[A, B] with TensorExp {
+abstract class LanternDriverC[A: Manifest, B: Manifest] extends DslDriverC[A, B] with LanternDriver[A, B] { self =>
   override def manifestA: Manifest[A] = manifest[A]
   override def manifestB: Manifest[B] = manifest[B]
+
+  override val codegen = new DslGenC {
+    val IR: self.type = self
+
+    override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+      case t@TensorNew(scalarCount) =>
+        val dataType = remap(t.m)
+        emitValDef(sym, backend.tensorDataNew(quote(sym), quote(scalarCount), dataType))
+      case t@TensorApply(x, index) =>
+        emitValDef(sym, backend.tensorDataApply(quote(x), quote(index)))
+      case t@TensorUpdate(x, index, y) =>
+        emitNode(sym, RawCode(backend.tensorDataUpdate(quote(x), quote(index), quote(y))))
+      case _ => super.emitNode(sym, rhs)
+    }
+  }
 }
-abstract class LanternDriverCublas[A: Manifest, B: Manifest] extends DslDriverCublas[A, B] with LanternDriver[A, B] with TensorExp {
+
+abstract class LanternDriverCublas[A: Manifest, B: Manifest] extends DslDriverCublas[A, B] with LanternDriver[A, B] { self =>
   backend = new BackendCublas
   override def manifestA: Manifest[A] = manifest[A]
   override def manifestB: Manifest[B] = manifest[B]
+
+  override val codegen = new DslGenCublas {
+    val IR: self.type = self
+
+    override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+      case t@TensorNew(scalarCount) =>
+        val dataType = remap(t.m)
+        emitValDef(sym, backend.tensorDataNew(quote(sym), quote(scalarCount), dataType))
+      case t@TensorApply(x, index) =>
+        emitValDef(sym, backend.tensorDataApply(quote(x), quote(index)))
+      case t@TensorUpdate(x, index, y) =>
+        emitNode(sym, RawCode(backend.tensorDataUpdate(quote(x), quote(index), quote(y))))
+      case _ => super.emitNode(sym, rhs)
+    }
+  }
 }
-abstract class LanternDriverCudnn[A: Manifest, B: Manifest] extends DslDriverCudnn[A, B] with LanternDriver[A, B] with TensorExp {
+
+abstract class LanternDriverCudnn[A: Manifest, B: Manifest] extends DslDriverCudnn[A, B] with LanternDriver[A, B] { self =>
   backend = new BackendCudnn
   override def manifestA: Manifest[A] = manifest[A]
   override def manifestB: Manifest[B] = manifest[B]
+
+  override val codegen = new DslGenCudnn {
+    val IR: self.type = self
+
+    override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+      case t@TensorNew(scalarCount) =>
+        val dataType = remap(t.m)
+        emitValDef(sym, backend.tensorDataNew(quote(sym), quote(scalarCount), dataType))
+      case t@TensorApply(x, index) =>
+        emitValDef(sym, backend.tensorDataApply(quote(x), quote(index)))
+      case t@TensorUpdate(x, index, y) =>
+        emitNode(sym, RawCode(backend.tensorDataUpdate(quote(x), quote(index), quote(y))))
+      case _ => super.emitNode(sym, rhs)
+    }
+  }
 }

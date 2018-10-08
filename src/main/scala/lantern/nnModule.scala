@@ -13,7 +13,7 @@ import scala.collection.mutable.Map
 import scala.collection.{Seq => NSeq}
 import scala.math._
 
-trait NNModule extends TensorExp {
+trait NNModule extends TensorDsl {
 
   abstract class Module {
     val name: String

@@ -446,7 +446,7 @@ class ONNXTest extends FunSuite {
 
     System.out.println(s"testing reading ONNX model using library from $model_file")
 
-    val inference_func = new DslDriverC[String, Unit] with ONNXLib {
+    val inference_func = new LanternDriverC[String, Unit] with ONNXLib {
 
       @virtualize
       def snippet(a: Rep[String]): Rep[Unit] = {
@@ -473,7 +473,7 @@ class ONNXTest extends FunSuite {
 
     System.out.println(s"testing reading ONNX model using library from $model_file for training")
 
-    val training_func = new DslDriverC[String, Unit] with ONNXLib {
+    val training_func = new LanternDriverC[String, Unit] with ONNXLib {
 
       @virtualize
       def snippet(a: Rep[String]): Rep[Unit] = {

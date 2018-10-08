@@ -2,17 +2,16 @@ package lantern
 
 import scala.util.continuations._
 import scala.util.continuations
-
 import org.scala_lang.virtualized.virtualize
 import org.scala_lang.virtualized.SourceContext
+import sun.reflect.generics.reflectiveObjects.NotImplementedException
 
 import scala.virtualization.lms._
-
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Seq => NSeq}
 import scala.math._
 
-trait TensorExp extends Dsl with Diff {
+trait TensorDsl extends TensorOps with Diff {
 
   /**
     Memory Management:
@@ -210,6 +209,17 @@ trait TensorExp extends Dsl with Diff {
     // Cleanup the backend. This is the last function that will be called in DSL programs.
     def cleanup(): Unit
 
+    def getMallocArenaString(count: String, dataType: String): String = {
+      "(" + dataType + "*)myMalloc(" + count + " * sizeof(" + dataType + "));"
+    }
+
+    // def tensorDataNew[T: Manifest](scalarCount: Rep[Int], dataType: String): Rep[Array[T]]
+    // def tensorDataApply[T: Manifest](x: Rep[Array[T]], index: Rep[Int]): Rep[T]
+    // def tensorDataUpdate[T: Manifest](x: Rep[Array[T]], index: Rep[Int], y: Rep[T]): Rep[Unit]
+    def tensorDataNew[T: Manifest](sym: String, scalarCount: String, dataType: String): String
+    def tensorDataApply[T: Manifest](x: String, index: String): String
+    def tensorDataUpdate[T: Manifest](x: String, index: String, y: String): String
+
     // Compute vector-vector dot product, i.e. inner product.
     // [V] dot [V] => [1] (scalar)
     def vectorVectorDot(x: Tensor, y: Tensor): Tensor
@@ -246,6 +256,20 @@ trait TensorExp extends Dsl with Diff {
   class BackendNative extends Backend {
     override def setup() {}
     override def cleanup() {}
+
+    // override def tensorDataNew[T: Manifest](scalarCount: Rep[Int], dataType: String): Rep[Array[T]] = NewArray[T](scalarCount)
+    // override def tensorDataApply[T: Manifest](x: Rep[Array[T]], index: Rep[Int]): Rep[T] =
+    //   unchecked[T](x, "[", index, "]")
+    // override def tensorDataUpdate[T: Manifest](x: Rep[Array[T]], index: Rep[Int], y: Rep[T]): Rep[Unit] =
+    //   unchecked[Unit](x, "[", index, "] = ", y)
+    override def tensorDataNew[T: Manifest](sym: String, scalarCount: String, dataType: String): String = {
+      // dataType + "* " + sym + " = " + getMallocArenaString(scalarCount, dataType)
+      getMallocArenaString(scalarCount, dataType)
+    }
+    override def tensorDataApply[T: Manifest](x: String, index: String): String =
+      x + "[" + index + "]"
+    override def tensorDataUpdate[T: Manifest](x: String, index: String, y: String): String =
+      x + "[" + index + "] = " + y
 
     override def vectorVectorDot(x: Tensor, y: Tensor): Tensor = {
       assert(x.shape(0) == y.shape(0))
@@ -306,6 +330,24 @@ trait TensorExp extends Dsl with Diff {
       """CUBLAS_CALL(cublasDestroy(cublasHandle));
         |CUDA_CALL(cudaFree(gpuMallocAddr));
       """.stripMargin)
+
+    /*
+    override def tensorDataNew[T: Manifest](scalarCount: Rep[Int], dataType: String): Rep[Array[T]] =
+      unchecked[Array[T]]("(" + dataType + "*)myGpuMalloc(", scalarCount, " * sizeof(" + dataType + "))")
+    override def tensorDataApply[T: Manifest](x: Rep[Array[T]], index: Rep[Int]): Rep[T] = {
+      // FIXME: Indexing GPU data doesn't work within `Snippet` CPU function doesn't work, need another approach.
+      unchecked[T](x, "[", index, "]")
+    }
+    override def tensorDataUpdate[T: Manifest](x: Rep[Array[T]], index: Rep[Int], y: Rep[T]): Rep[Unit] =
+      unchecked[Unit]("arrayUpdate<<<1, 1>>>(", x, ",", index, ",", y)
+    */
+    override def tensorDataNew[T: Manifest](sym: String, scalarCount: String, dataType: String): String =
+      "(" + dataType + "*)myGpuMalloc(" + scalarCount + " * sizeof(" + dataType + "))"
+    // FIXME: Indexing GPU data within `Snippet` CPU function doesn't work, need another approach.
+    override def tensorDataApply[T: Manifest](x: String, index: String): String =
+      x + "[" + index + "]"
+    override def tensorDataUpdate[T: Manifest](x: String, index: String, y: String): String =
+      "arrayUpdate<<<1, 1>>>(" + x + ", " + index + ", " + y + ");"
 
     // Reference:
     // https://docs.nvidia.com/cuda/cublas/index.html#cublas-lt-t-gt-dot
@@ -373,6 +415,60 @@ trait TensorExp extends Dsl with Diff {
       generateRawCode("CUDNN_CALL(cudnnDestroy(cudnnHandle));")
     }
   }
+
+  /**
+    * Transfer data between backends.
+    */
+  def transfer[T](from: Backend, to: Backend)(data: T): T = {
+    // TODO: In the future, consider cases where unified memory is used (i.e. `cudaMallocMananged`).
+    def transferTensor(tensor: Tensor): Tensor = {
+      (from, to) match {
+        case (cpu: BackendNative, gpu: BackendCublas) =>
+          generateRawComment("Transfer tensor from CPU to GPU.")
+          val res = NewTensor[Float](tensor.scalarCount)
+          unchecked[Unit]("CUDA_CALL(cudaMemcpy(", res, ", ", tensor.data, ", ", tensor.scalarCount, ", cudaMemcpyHostToDevice))")
+          Tensor(res, tensor.shape: _*)
+        case (gpu: BackendCublas, cpu: BackendNative) =>
+          generateRawComment("Transfer tensor from GPU to CPU.")
+          val res = NewTensor[Float](tensor.scalarCount)
+          unchecked[Unit]("CUDA_CALL(cudaMemcpy(", res, ", ", tensor.data, ", ", tensor.scalarCount, ", cudaMemcpyDeviceToHost))")
+          Tensor(res, tensor.shape: _*)
+        case _ =>
+          System.err.println(s"Backend transfer undefined: ${from}, ${to}")
+          ???
+      }
+    }
+
+    data match {
+      case _: Unit => data /* no-op */
+      case t: Tensor => transferTensor(t).asInstanceOf[T]
+      case tensors: Seq[Tensor] => tensors.foreach(transferTensor).asInstanceOf[T]
+      case _ =>
+        System.err.println(s"'data' has unknown type: ${data.getClass.toString}")
+        ???
+    }
+  }
+
+  /**
+    * Call a function with given inputs, generating code for the specified backend.
+    * The inputs and result will be transferred between backends automatically.
+    */
+  def withBackend[T, U](b: Backend)(input: T)(f: T => U) = {
+    val originalBackend = backend
+
+    // Change the backend (i.e. codegen target).
+    // Then, transfer input to the new backend and call `f`.
+    backend = b
+    val transferredInput = transfer(originalBackend, b)(input)
+    val result = f(transferredInput)
+
+    // Transfer `result` to the old backend, then reset the backend.
+    transfer(originalBackend, b)(result)
+    backend = originalBackend
+  }
+
+  def withCPU[T, U](input: T)(f: T => U) = withBackend(new BackendNative)(input)(f)
+  def withGPU[T, U](input: T)(f: T => U) = withBackend(new BackendCudnn)(input)(f)
 
   // The current backend for code generation.
   // To switch code generation to a different backend, simply change this value
