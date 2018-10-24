@@ -1032,8 +1032,8 @@ trait TensorDsl extends DslOps with Diff {
     val scalarCount = shape.scalarCount
     val isScalar = scalarCount == 1
 
-    assert(shape.strides.length >= 1)
-    assert(scalarCount != 0, "Empty Tensor!!!")
+    // assert(shape.strides.length >= 1, "There must be at least one stride")
+    assert(scalarCount != 0, "Tensor cannot have scalar count 0")
 
     def apply(i: Rep[Int]): Tensor = new Tensor(slice(data, i * shape.strides(0)), shape.tail)
     // def apply(i: Rep[Int], j: Rep[Int]): Tensor = new Tensor(slice(data, i * shape.strides(0)), (j - i + 1) +: shape.tail)
@@ -1857,7 +1857,7 @@ trait TensorDsl extends DslOps with Diff {
 
     def fillWithBias(dims: Seq[Int], bias: Tensor, dim: Int) = backend.fillWithBias(dims, bias, dim)
 
-    def scalar(value: Rep[Float]) = fill(Seq(1), value)
+    def scalar(value: Rep[Float]) = fill(Seq(), value)
 
     def zeros(dims: Int*): Tensor = // fill(dims, 0.0f)
       new Tensor(backend.mallocArray[Float](dims.product), dims)
