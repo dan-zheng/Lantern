@@ -7,6 +7,7 @@ import org.scala_lang.virtualized.SourceContext
 import scala.virtualization.lms._
 import scala.virtualization.lms.common._
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{Map => MutableMap}
 import scala.math._
 
 trait TensorDsl extends DslOps with Diff {
@@ -4068,6 +4069,52 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 }
 
 trait TensorDslCudnn extends TensorDslCublas {
+
+  // A map from tensor shapes to cuDNN tensor descriptors.
+  private var tensorDescriptorCache = MutableMap[Dimensions, Rep[String]]()
+  private var tensorDescriptorCount = 0
+  def freshDescriptor: Int = { val tmp = tensorDescriptorCount; tensorDescriptorCount += 1; tmp }
+
+  class TensorDescriptorOps(x: Tensor) {
+    def descriptor: Rep[String] = {
+      /*
+      tensorDescriptorCache.getOrElse(x.shape, {
+      })
+      */
+      if (tensorDescriptorCache.contains(x.shape)) {
+        tensorDescriptorCache(x.shape)
+      } else {
+        val descName = "desc${freshDescriptor}"
+        if (x.rank == 4) {
+          unchecked[Unit](
+            Seq(s"""
+               |cudnnTensorDescriptor_t $descName;
+               |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
+               |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+               |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+               |    """.stripMargin, x.shape(0), ", ", x.shape(1), ", ", x.shape(2), ", ", x.shape(3), "));"))
+        } else {
+          val dims: Seq[Any] = x.shape.flatMap(dim => Seq[Any](dim, ", "))
+          val strides: Seq[Any] = x.shape.strides.flatMap(stride => Seq[Any](stride, ", "))
+          val dimsName = "dims${freshDescriptor}"
+          val stridesName = "strides${freshDescriptor}"
+          unchecked[Unit](
+            Seq(
+               s"cudnnTensorDescriptor_t $descName;\n" +
+               s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
+               s"int $dimsName[] = {", dims, "};\n" +
+               s"int $stridesName[] = {", strides, "};\n" +
+               "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
+               s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${x.rank}, $dimsName, $stridesName));\n"))
+        }
+        // Update descriptor cache.
+        tensorDescriptorCache(x.shape) = descName
+        // Return descriptor name.
+        descName
+      }
+    }
+  }
+  implicit def tensorToDescriptorOps(x: Tensor) = new TensorDescriptorOps(x)
 
   // Reference: https://docs.nvidia.com/deeplearning/sdk/cudnn-developer-guide/index.html#cudnnActivationMode_t
   object Activation extends Enumeration {
