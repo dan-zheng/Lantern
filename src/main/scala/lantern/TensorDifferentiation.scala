@@ -3412,6 +3412,10 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
         |CUDA_CALL(cudaMalloc(&gpuMallocBase, HEAP_SIZE));
         |CUDA_CALL(cudaMemset(gpuMallocBase, 0, HEAP_SIZE));
         |gpuMallocAddr = gpuMallocBase;
+        |const float zero = 0;
+        |const float one = 1;
+        |CUDA_CALL(cudaMemcpyToSymbol(CONST_ZERO, &zero, sizeof(float)));
+        |CUDA_CALL(cudaMemcpyToSymbol(CONST_ONE, &one, sizeof(float)));
       """.stripMargin)
 
     override def cleanup(): Unit = generateRawCode(
@@ -3465,8 +3469,10 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 
     // Reference: https://docs.nvidia.com/cuda/cublas/index.html#cublas-lt-t-gt-gemv
     def sgemv(m: Rep[Int], n: Rep[Int], matrix: Rep[Array[Float]], vector: Rep[Array[Float]], result: Rep[Array[Float]]) = {
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         "CUBLAS_CALL(cublasSgemv(cublasHandle, CUBLAS_OP_T, ",
         n, ",", m, ",", one, ",",
@@ -3483,8 +3489,10 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 
     // Reference: https://docs.nvidia.com/cuda/cublas/index.html#cublas-lt-t-gt-gemm
     def sgemm(m: Rep[Int], n: Rep[Int], k: Rep[Int], a: Rep[Array[Float]], b: Rep[Array[Float]], result: Rep[Array[Float]]) = {
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         "CUBLAS_CALL(cublasSgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, ",
         n, ",", m, ",", k, ",", one, ",",
@@ -3502,8 +3510,10 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 
     override def dot_grad(x: TensorR, y: TensorR, output: TensorR): Unit = {
       // use CuBLAS instead
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       (x.x.rank, y.x.rank) match {
         case (1, 1) =>
           val dim = x.x.shape(0)
@@ -3756,7 +3766,8 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
           val n = y.shape(1)
           val k = y.shape(0)
           val res = mallocArray[Float](m * n)
-          val zero = NewArray[Float](1); zero(0) = 0
+          // val zero = NewArray[Float](1); zero(0) = 0
+          val zero = "CONST_ZERO"
           val Alpha = NewArray[Float](1); Alpha(0) = alpha
           unchecked[Unit](
             "CUBLAS_CALL(cublasSgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, ",
@@ -3768,7 +3779,8 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
           val n = y.shape(0)
           val k = y.shape(1)
           val res = mallocArray[Float](m * n)
-          val zero = NewArray[Float](1); zero(0) = 0
+          // val zero = NewArray[Float](1); zero(0) = 0
+          val zero = "CONST_ZERO"
           val Alpha = NewArray[Float](1); Alpha(0) = alpha
           unchecked[Unit](
             "CUBLAS_CALL(cublasSgemm(cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, ",
@@ -3780,7 +3792,8 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
           val n = y.shape(1)
           val k = y.shape(0)
           val res = mallocArray[Float](m * n)
-          val zero = NewArray[Float](1); zero(0) = 0
+          // val zero = NewArray[Float](1); zero(0) = 0
+          val zero = "CONST_ZERO"
           val Alpha = NewArray[Float](1); Alpha(0) = alpha
           unchecked[Unit](
             "CUBLAS_CALL(cublasSgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T, ",
@@ -3792,7 +3805,8 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
           val n = y.shape(0)
           val k = y.shape(1)
           val res = mallocArray[Float](m * n)
-          val zero = NewArray[Float](1); zero(0) = 0
+          // val zero = NewArray[Float](1); zero(0) = 0
+          val zero = "CONST_ZERO"
           val Alpha = NewArray[Float](1); Alpha(0) = alpha
           unchecked[Unit](
             "CUBLAS_CALL(cublasSgemm(cublasHandle, CUBLAS_OP_T, CUBLAS_OP_T, ",
@@ -3804,7 +3818,8 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 
     override def gemm_grad(x: TensorR, transX: Boolean, y: TensorR, transY: Boolean, alpha: Float, output: TensorR): Unit = {
       val alpha1 = NewArray[Float](1); alpha1(0) = alpha;
-      val one = NewArray[Float](1); one(0) = 1.0f;
+      // val one = NewArray[Float](1); one(0) = 1.0f;
+      val one = "CONST_ONE"
       generateRawComment("backprop of gemm")
       (transX, transY) match {
         case (false, false) =>
@@ -4214,8 +4229,10 @@ trait TensorDslCudnn extends TensorDslCublas {
       val outStrid = NewArray[Int](4); val resStrid = resTensor.shape.strides.padTo(4, unit(1));
       for (i <- 0 until 4: Range) outStrid(dimsPad(i)) = resStrid(i)
 
-      val one = NewArray[Float](1); one(0) = 1
-      val zero = NewArray[Float](0); zero(0) = 0
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
+      // val zero = NewArray[Float](0); zero(0) = 0
+      val zero = "CONST_ZERO"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4251,7 +4268,8 @@ trait TensorDslCudnn extends TensorDslCublas {
       val outStrid = NewArray[Int](4); val resStrid = y.x.shape.strides.padTo(4, unit(1));
       for (i <- 0 until 4: Range) outStrid(dimsPad(i)) = resStrid(i)
 
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4294,7 +4312,8 @@ trait TensorDslCudnn extends TensorDslCublas {
         }
       }
       val scaled = NewArray[Float](1); scaled(0) = scale
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq("""
           |{
@@ -4323,8 +4342,10 @@ trait TensorDslCudnn extends TensorDslCublas {
                                 padding: (Int, Int), strides: (Int, Int), dilations: (Int, Int)): Unit = {
       assert(input.rank == 4, s"Convolution input must have rank 4, but got ${input.rank}")
       assert(res.rank == 4, s"Convolution result must have rank 4, but got ${res.rank}")
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq("""
           |{
@@ -4404,7 +4425,8 @@ trait TensorDslCudnn extends TensorDslCublas {
       assert(resGrad.rank >= 2, "Convolution result gradient must have rank no less than 2")
       if (biasGrad.rank == 1) assert(resGrad.shape(1) == biasGrad.shape(0), "Convolution result gradient shape(1) must equal to Bias gradient shape(0)")
       val resGradShape = resGrad.shape.padTo(4, 1)
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq("""
           |{
@@ -4434,7 +4456,8 @@ trait TensorDslCudnn extends TensorDslCublas {
                                      padding: (Int, Int), strides: (Int, Int), dilations: (Int, Int)): Unit = {
       assert(resGrad.rank == 4, s"Convolution result gradient must have rank 4, but got ${resGrad.rank}")
       assert(inputGrad.rank == 4, s"Convolution input gradient must have rank 4, but got ${inputGrad.rank}")
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4492,7 +4515,8 @@ trait TensorDslCudnn extends TensorDslCublas {
     def cudnnConvolutionBackwardFilter(filterGrad: Tensor, input: Tensor, resGrad: Tensor,
                                        padding: (Int, Int), strides: (Int, Int), dilations: (Int, Int)): Unit = {
       assert(resGrad.rank == 4, s"Convolution result gradient must have rank 4, got ${resGrad.rank}")
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4602,8 +4626,10 @@ trait TensorDslCudnn extends TensorDslCublas {
         case Some(pads) => (pads(0), pads(2))
       }
       val (verticalStride :: horizontalStride :: Nil) = strides.take(2).toList
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       val (outputHeight, outputWidth) = pads match {
         case None => (convSize(input.shape(2), kernel(0), strides(0)), convSize(input.shape(3), kernel(1), strides(1)))
         case Some(pads) => (convSize(input.shape(2), kernel(0), strides(0), pads(0)), convSize(input.shape(3), kernel(1), strides(1), pads(2)))
@@ -4650,8 +4676,10 @@ trait TensorDslCudnn extends TensorDslCublas {
       val (windowHeight :: windowWidth :: Nil) = kernel.take(2).toList
       val (verticalPadding, horizontalPadding) = (pads(0), pads(2))
       val (verticalStride :: horizontalStride :: Nil) = strides.take(2).toList
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4704,8 +4732,10 @@ trait TensorDslCudnn extends TensorDslCublas {
         if (bias.rank == 1) Seq(1, bias.shape(0), 1, 1)
         else if (bias.rank == 4) bias.shape.dims
         else {System.out.println(s"bias.rank is not 1 or 4 but ${bias.rank}"); ???}
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4745,8 +4775,10 @@ trait TensorDslCudnn extends TensorDslCublas {
         if (bias.rank == 1) Seq(1, bias.shape(0), 1, 1)
         else if (bias.rank == 4) bias.shape.dims
         else {System.out.println(s"bias rank is not 1 or 4, but ${bias.rank}"); ???}
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4786,8 +4818,10 @@ trait TensorDslCudnn extends TensorDslCublas {
         if (bias.x.rank == 1) Seq(1, bias.x.shape(0), 1, 1)
         else if (bias.x.rank == 4) bias.x.shape.dims
         else {System.out.println(s"bias rank is not 1 or 4, but ${bias.x.rank}"); ???}
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4845,8 +4879,10 @@ trait TensorDslCudnn extends TensorDslCublas {
     def cudnnBatchNormalization1DForwardInference(x: Tensor, res: Tensor, scale: Tensor, bias: Tensor,
                                                   runningMean: Tensor, runningVar: Tensor,
                                                   momentum: Double = 0.1, epsilon: Double = 1e-5): Unit = {
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4875,8 +4911,10 @@ trait TensorDslCudnn extends TensorDslCublas {
     def cudnnBatchNormalization1DForwardTraining(x: Tensor, res: Tensor, scale: Tensor, bias: Tensor,
                                                runningMean: Tensor, runningVar: Tensor, saveMean: Tensor, saveInvVariance: Tensor,
                                                momentum: Double = 0.1, epsilon: Double = 1e-5): Unit = {
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -4906,8 +4944,10 @@ trait TensorDslCudnn extends TensorDslCublas {
     def cudnnBatchNormalization1DBackward(input: TensorR, res: TensorR, scale: TensorR, bias: TensorR,
                                         saveMean: Tensor, saveInvVariance: Tensor,
                                         momentum: Double = 1.0, epsilon: Double = 1e-5): Unit = {
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -5054,8 +5094,10 @@ trait TensorDslCudnn extends TensorDslCublas {
 
     def cudnnActivationForward(x: Tensor, activation: Activation.Value, inPlace: Boolean = false): Tensor = {
       val xShape = x.shape.padTo(4, unit(1)) //activation functions only support tensors of rank 4
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       val res = if (inPlace) x else Tensor(mallocArray[Float](x.scalarCount), x.shape: _*)
       unchecked[Unit](
         Seq(s"""
@@ -5086,8 +5128,10 @@ trait TensorDslCudnn extends TensorDslCublas {
       val inputXShape = input.x.shape.padTo(4, unit(1)) // activation functions only support tensors of rank 4
       Tensor.assertShapeEqual(input.x.shape, res.x.shape)
       Tensor.assertShapeEqual(input.d.shape, res.d.shape)
-      val one = NewArray[Float](1); one(0) = 1
-      val zero = NewArray[Float](1); zero(0) = 0
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -5136,8 +5180,10 @@ trait TensorDslCudnn extends TensorDslCublas {
 
     def cudnnSoftmaxForward(x: Tensor, mode: SoftmaxMode.Value): Tensor = {
       assert(x.rank == 4, s"Softmax kernel only takes tensors of rank 4, and reduce on dim 1. Reshape your tensor accordingly before using this function. Got ${x.shape}")
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       val res = Tensor(mallocArray[Float](x.scalarCount), x.shape: _*)
       unchecked[Unit](
         Seq(s"""
@@ -5164,7 +5210,8 @@ trait TensorDslCudnn extends TensorDslCublas {
       // The shape of the input forward value is used in the generated code.
       Tensor.assertShapeEqual(input.x.shape, res.x.shape)
       Tensor.assertShapeEqual(input.d.shape, res.d.shape)
-      val one = NewArray[Float](1); one(0) = 1
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{
@@ -5221,8 +5268,10 @@ trait TensorDslCudnn extends TensorDslCublas {
         case None => Tensor(mallocArray[Float](unflatShape.product1), unflatShape: _*)
         case Some(array) => Tensor(array, unflatShape: _*)
       }
-      val zero = NewArray[Float](1); zero(0) = 0
-      val one = NewArray[Float](1); one(0) = 1
+      // val zero = NewArray[Float](1); zero(0) = 0
+      val zero = "CONST_ZERO"
+      // val one = NewArray[Float](1); one(0) = 1
+      val one = "CONST_ONE"
       unchecked[Unit](
         Seq(s"""
           |{

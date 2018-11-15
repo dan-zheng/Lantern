@@ -961,6 +961,11 @@ trait DslGenCublas extends DslGenBase with CudaGenGPUOps {
       |    *out = f(*in1, *in2);
       |  });
       |}
+      |
+      // |__constant__ float CONST_ZERO = 0;
+      // |__constant__ float CONST_ONE = 1;
+      |__constant__ float CONST_ZERO[1];
+      |__constant__ float CONST_ONE[1];
       |""".stripMargin
 
 }

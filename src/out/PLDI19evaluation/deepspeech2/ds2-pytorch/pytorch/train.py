@@ -129,7 +129,8 @@ def main():
     forward_time = AverageMeter()
     backward_time = AverageMeter()
 
-    filename = "/scratch/wu636/Lantern/src/out/PLDI19evaluation/deepspeech2/ds2-pytorch/data/test/deepspeech_train.pickle"
+    # filename = "/scratch/wu636/Lantern/src/out/PLDI19evaluation/deepspeech2/ds2-pytorch/data/test/deepspeech_train.pickle"
+    filename = "/homes/zheng321/deepspeech_train.pickle"
     batchedData = user_defined_input.Batch(filename)
 
     def train_one_epoch(epoch):
