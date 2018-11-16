@@ -4070,18 +4070,27 @@ trait TensorDslCublas extends TensorDsl with GPUOps {
 trait TensorDslCudnn extends TensorDslCublas {
 
   // A map from tensor shapes to cuDNN tensor descriptors.
-  private var tensorDescriptorCache = MutableMap[Dimensions, String]()
+  private var tensorDescriptorCache = MutableMap[Dimensions, (String, Seq[Any])]()
   private var tensorDescriptorCount = 0
   def freshDescriptorId: Int = { val tmp = tensorDescriptorCount; tensorDescriptorCount += 1; tmp }
 
   class TensorDescriptorOps(x: Tensor) {
-    def descriptor: Rep[String] = {
+    def descriptor: String = {
       if (tensorDescriptorCache.contains(x.shape)) {
-        tensorDescriptorCache(x.shape)
+        tensorDescriptorCache(x.shape)._1
       } else {
         val id = freshDescriptorId
         val descName = s"desc$id"
         if (x.rank == 4) {
+          val code = Seq[Any](
+            s"""
+               |cudnnTensorDescriptor_t $descName;
+               |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
+               |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+               |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+               |    """.stripMargin, x.shape(0), ", ", x.shape(1), ", ", x.shape(2), ", ", x.shape(3), "))")
+          tensorDescriptorCache(x.shape) = (descName, code)
+          /*
           unchecked[Unit](
             Seq(s"""
                |cudnnTensorDescriptor_t $descName;
@@ -4089,12 +4098,22 @@ trait TensorDslCudnn extends TensorDslCublas {
                |CUDNN_CALL(cudnnSetTensor4dDescriptor(
                |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
                |    """.stripMargin, x.shape(0), ", ", x.shape(1), ", ", x.shape(2), ", ", x.shape(3), "))"): _*)
+          */
         } else {
           assert(x.rank >= 3, "'cudnnCreateTensorDescriptor' only supports descriptors for tensors with rank at least 3")
           val dims: Seq[Any] = x.shape.flatMap(dim => Seq[Any](dim, ", "))
           val strides: Seq[Any] = x.shape.strides.flatMap(stride => Seq[Any](stride, ", "))
           val dimsName = s"dims$id"
           val stridesName = s"strides$id"
+          val code = Seq[Any](
+            s"cudnnTensorDescriptor_t $descName;\n" +
+            s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
+            s"int $dimsName[] = {") ++ dims ++ Seq("};\n" +
+            s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
+            "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
+            s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${x.rank}, $dimsName, $stridesName))"): _*)
+          tensorDescriptorCache(x.shape) = (descName, code)
+          /*
           unchecked[Unit](
             Seq(
                s"cudnnTensorDescriptor_t $descName;\n" +
@@ -4103,9 +4122,10 @@ trait TensorDslCudnn extends TensorDslCublas {
                s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
                "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
                s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${x.rank}, $dimsName, $stridesName))"): _*)
+          */
         }
         // Update descriptor cache.
-        tensorDescriptorCache(x.shape) = descName
+        // tensorDescriptorCache(x.shape) = descName
         // Return descriptor name.
         descName
       }
@@ -4194,6 +4214,8 @@ trait TensorDslCudnn extends TensorDslCublas {
     override def setup(): Unit = {
       super.setup()
       generateRawCode("cudnnHandle_t cudnnHandle;\nCUDNN_CALL(cudnnCreate(&cudnnHandle));")
+      // Generate raw descriptors.
+      tensorDescriptorCache.values.map(_._2).foreach(x => unchecked[Unit](x: _*))
     }
 
     override def cleanup(): Unit = {
