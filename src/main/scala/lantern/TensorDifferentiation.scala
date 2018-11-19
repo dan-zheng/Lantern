@@ -4071,65 +4071,149 @@ trait TensorDslCudnn extends TensorDslCublas {
 
   // A map from tensor shapes to cuDNN tensor descriptors.
   private var tensorDescriptorCache = MutableMap[Dimensions, (String, Seq[Any])]()
-  private var tensorDescriptorCount = 0
-  def freshDescriptorId: Int = { val tmp = tensorDescriptorCount; tensorDescriptorCount += 1; tmp }
+  // A map from tensor shapes to cuDNN filter descriptors.
+  private var filterDescriptorCache = MutableMap[Dimensions, (String, Seq[Any])]()
+  // A map from tensor shapes to cuDNN dropout descriptors.
+  private var dropoutDescriptorCache = MutableMap[Float, (String, Seq[Any])]()
+  // A map from tensor shapes to cuDNN RNN descriptors.
+  private var rnnDescriptorCache = MutableMap[(RnnMode, Int, Rep[Int], Float, Boolean), (String, Seq[Any])]()
+
+  private var descriptorCount = 0
+  def freshDescriptorId: Int = { val tmp = descriptorCount; descriptorCount += 1; tmp }
+
+  def tensorDescriptor(shape: Dimensions): String = {
+    if (tensorDescriptorCache.contains(shape)) {
+      System.out.println(s"REUSING TENSOR DESCRIPTOR")
+      return tensorDescriptorCache(shape)._1
+    }
+
+    val id = freshDescriptorId
+    val descName = s"desc$id"
+    if (shape.length == 4) {
+      unchecked[Unit](
+        Seq(s"""
+           |cudnnTensorDescriptor_t $descName;
+           |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
+           |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+           |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+           |    """.stripMargin, shape(0), ", ", shape(1), ", ", shape(2), ", ", shape(3), "))"): _*)
+    } else {
+      assert(shape.length >= 3, "'cudnnCreateTensorDescriptor' only supports descriptors for tensors with rank at least 3")
+      val dims: Seq[Any] = shape.flatMap(dim => Seq[Any](dim, ", "))
+      val strides: Seq[Any] = shape.strides.flatMap(stride => Seq[Any](stride, ", "))
+      val dimsName = s"dims$id"
+      val stridesName = s"strides$id"
+      unchecked[Unit](
+        Seq(
+           s"cudnnTensorDescriptor_t $descName;\n" +
+           s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
+           s"int $dimsName[] = {") ++ dims ++ Seq("};\n" +
+           s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
+           "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
+           s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${shape.length}, $dimsName, $stridesName))"): _*)
+    }
+
+    // Update descriptor cache.
+    tensorDescriptorCache(shape) = (descName, Seq())
+    System.out.println(s"NEW TENSOR DESCRIPTOR ${tensorDescriptorCache.size}")
+    // Return descriptor name.
+    descName
+  }
+
+  def filterDescriptor(shape: Dimensions): String = {
+    if (filterDescriptorCache.contains(shape)) {
+      System.out.println(s"REUSING FILTER DESCRIPTOR")
+      return filterDescriptorCache(shape)._1
+    }
+
+    val id = freshDescriptorId
+    val descName = s"desc$id"
+    if (shape.length == 4) {
+      unchecked[Unit](
+        Seq(s"""
+           |cudnnTensorDescriptor_t $descName;
+           |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
+           |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+           |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+           |    """.stripMargin, shape(0), ", ", shape(1), ", ", shape(2), ", ", shape(3), "))"): _*)
+    } else {
+      assert(shape.length >= 3, "'cudnnCreateTensorDescriptor' only supports descriptors for tensors with rank at least 3")
+      val dims: Seq[Any] = shape.flatMap(dim => Seq[Any](dim, ", "))
+      val strides: Seq[Any] = shape.strides.flatMap(stride => Seq[Any](stride, ", "))
+      val dimsName = s"dims$id"
+      val stridesName = s"strides$id"
+      unchecked[Unit](
+        Seq(
+           s"cudnnTensorDescriptor_t $descName;\n" +
+           s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
+           s"int $dimsName[] = {") ++ dims ++ Seq("};\n" +
+           s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
+           "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
+           s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${shape.length}, $dimsName, $stridesName))"): _*)
+    }
+
+    // Update descriptor cache.
+    filterDescriptorCache(shape) = (descName, Seq())
+    System.out.println(s"NEW FILTER DESCRIPTOR ${filterDescriptorCache.size}")
+    // Return descriptor name.
+    descName
+  }
+
+  def dropoutDescriptor(prob: Float): String = {
+    if (dropoutDescriptorCache.contains(prob)) {
+      System.out.println(s"REUSING DROPOUT DESCRIPTOR")
+      return dropoutDescriptorCache(prob)._1
+    }
+
+    val id = freshDescriptorId
+    val dropoutStateSize = s"dropoutStateSize$id"
+    val dropoutStates = s"dropoutStates$id"
+    val dropoutDesc = s"dropoutDesc$id"
+    unchecked[Unit](
+      Seq(s"""
+          |size_t $dropoutStateSize;
+          |CUDNN_CALL(cudnnDropoutGetStatesSize(cudnnHandle, &$dropoutStateSize));
+          |void* $dropoutStates = myGpuMalloc($dropoutStateSize);
+          |
+          |cudnnDropoutDescriptor_t $dropoutDesc;
+          |CUDNN_CALL(cudnnCreateDropoutDescriptor(&$dropoutDesc));
+          |CUDNN_CALL(cudnnSetDropoutDescriptor(
+          |    $dropoutDesc, cudnnHandle, $prob, $dropoutStates, $dropoutStateSize, time(NULL)))""".stripMargin): _*)
+    dropoutDescriptorCache(prob) = (dropoutDesc, Seq())
+    System.out.println(s"NEW DROPOUT DESCRIPTOR ${dropoutDescriptorCache.size}")
+    dropoutDesc
+  }
+
+  def rnnDescriptor(mode: RnnMode, numLayers: Int, hiddenSize: Rep[Int],
+                    dropout: Float, bidirectional: Boolean): String = {
+    val config = (mode, numLayers, hiddenSize, dropout, bidirectional)
+    if (rnnDescriptorCache.contains(config)) {
+      System.out.println(s"REUSING RNN DESCRIPTOR")
+      return rnnDescriptorCache(config)._1
+    }
+
+    val id = freshDescriptorId
+    // TODO: Change `dropoutStateSize` to be constant?
+    // It might not work actually if `cudnnDropoutGetStatesSize` doesn't always return the same value.
+    // A constant registration mechanism (for CONST_ZERO and CONST_ONE) would be nice.
+    val dropoutDesc = dropoutDescriptor(dropout)
+    val rnnDesc = s"rnnDesc$id"
+    unchecked[Unit](
+      Seq(s"""
+          |cudnnRNNDescriptor_t $rnnDesc;
+          |CUDNN_CALL(cudnnCreateRNNDescriptor(&$rnnDesc));
+          |CUDNN_CALL(cudnnSetRNNDescriptor(
+          |    cudnnHandle, $rnnDesc,
+          |    /*hiddenSize*/ """.stripMargin, hiddenSize, s""", /*numLayers*/ $numLayers,
+          |    $dropoutDesc, CUDNN_LINEAR_INPUT, ${if(bidirectional) "CUDNN_BIDIRECTIONAL" else "CUDNN_UNIDIRECTIONAL"},
+          |    ${mode.toString}, CUDNN_RNN_ALGO_STANDARD, CUDNN_DATA_FLOAT))""".stripMargin): _*)
+    rnnDescriptorCache(config) = (rnnDesc, Seq())
+    System.out.println(s"NEW RNN DESCRIPTOR ${rnnDescriptorCache.size}")
+    rnnDesc
+  }
 
   class TensorDescriptorOps(x: Tensor) {
-    def descriptor: String = {
-      if (tensorDescriptorCache.contains(x.shape)) {
-        tensorDescriptorCache(x.shape)._1
-      } else {
-        val id = freshDescriptorId
-        val descName = s"desc$id"
-        if (x.rank == 4) {
-          val code = Seq[Any](
-            s"""
-               |cudnnTensorDescriptor_t $descName;
-               |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
-               |CUDNN_CALL(cudnnSetTensor4dDescriptor(
-               |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
-               |    """.stripMargin, x.shape(0), ", ", x.shape(1), ", ", x.shape(2), ", ", x.shape(3), "))")
-          tensorDescriptorCache(x.shape) = (descName, code)
-          /*
-          unchecked[Unit](
-            Seq(s"""
-               |cudnnTensorDescriptor_t $descName;
-               |CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));
-               |CUDNN_CALL(cudnnSetTensor4dDescriptor(
-               |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
-               |    """.stripMargin, x.shape(0), ", ", x.shape(1), ", ", x.shape(2), ", ", x.shape(3), "))"): _*)
-          */
-        } else {
-          assert(x.rank >= 3, "'cudnnCreateTensorDescriptor' only supports descriptors for tensors with rank at least 3")
-          val dims: Seq[Any] = x.shape.flatMap(dim => Seq[Any](dim, ", "))
-          val strides: Seq[Any] = x.shape.strides.flatMap(stride => Seq[Any](stride, ", "))
-          val dimsName = s"dims$id"
-          val stridesName = s"strides$id"
-          val code = Seq[Any](
-            s"cudnnTensorDescriptor_t $descName;\n" +
-            s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
-            s"int $dimsName[] = {") ++ dims ++ Seq("};\n" +
-            s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
-            "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
-            s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${x.rank}, $dimsName, $stridesName))"): _*)
-          tensorDescriptorCache(x.shape) = (descName, code)
-          /*
-          unchecked[Unit](
-            Seq(
-               s"cudnnTensorDescriptor_t $descName;\n" +
-               s"CUDNN_CALL(cudnnCreateTensorDescriptor(&$descName));\n" +
-               s"int $dimsName[] = {") ++ dims ++ Seq("};\n" +
-               s"int $stridesName[] = {") ++ strides ++ Seq("};\n" +
-               "CUDNN_CALL(cudnnSetTensorNdDescriptor(\n" +
-               s"    $descName, CUDNN_DATA_FLOAT, /*nbDims*/ ${x.rank}, $dimsName, $stridesName))"): _*)
-          */
-        }
-        // Update descriptor cache.
-        // tensorDescriptorCache(x.shape) = descName
-        // Return descriptor name.
-        descName
-      }
-    }
+    def descriptor: String = tensorDescriptor(x.shape)
   }
   implicit def tensorToDescriptorOps(x: Tensor) = new TensorDescriptorOps(x)
 
@@ -4214,8 +4298,11 @@ trait TensorDslCudnn extends TensorDslCublas {
     override def setup(): Unit = {
       super.setup()
       generateRawCode("cudnnHandle_t cudnnHandle;\nCUDNN_CALL(cudnnCreate(&cudnnHandle));")
-      // Generate raw descriptors.
+      /*
+      // Generate tensor descriptors.
+      generateRawComment("Generate tensor descriptors.")
       tensorDescriptorCache.values.map(_._2).foreach(x => unchecked[Unit](x: _*))
+      */
     }
 
     override def cleanup(): Unit = {
@@ -4380,6 +4467,67 @@ trait TensorDslCudnn extends TensorDslCublas {
         Seq(
           "CUDNN_CALL(cudnnAddTensor(\n" +
           "    cudnnHandle, ", scaled, ", bias_desc, ", bias.data, ", ", one, ", out_desc, ", res.data, "));\n" +
+          "}"): _*
+      )
+    }
+
+    // Reference: https://docs.nvidia.com/deeplearning/sdk/cudnn-developer-guide/index.html#cudnnConvolutionForward
+    def cudnnFindConvolutionForwardAlgorithmEx(input: Tensor, filter: Tensor, res: Tensor, bias: Option[Tensor] = None,
+                                               padding: (Int, Int), strides: (Int, Int), dilations: (Int, Int)): Unit = {
+      assert(input.rank == 4, s"Convolution input must have rank 4, but got ${input.rank}")
+      assert(res.rank == 4, s"Convolution result must have rank 4, but got ${res.rank}")
+      val zero = NewArray[Float](1); zero(0) = 0
+      val one = NewArray[Float](1); one(0) = 1
+      unchecked[Unit](
+        Seq("""
+          |{
+          |cudnnTensorDescriptor_t in_desc;
+          |CUDNN_CALL(cudnnCreateTensorDescriptor(&in_desc));
+          |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+          |    in_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+          |    """.stripMargin, input.shape(0), ", ", input.shape(1), ", ", input.shape(2), ", ",  input.shape(3), """));
+          |
+          |cudnnFilterDescriptor_t filt_desc;
+          |CUDNN_CALL(cudnnCreateFilterDescriptor(&filt_desc));
+          |CUDNN_CALL(cudnnSetFilter4dDescriptor(
+          |    filt_desc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW,
+          |    """.stripMargin, filter.shape(0), ", ", filter.shape(1), ", ", filter.shape(2), ", ", filter.shape(3), """));
+          |
+          |cudnnTensorDescriptor_t out_desc;
+          |CUDNN_CALL(cudnnCreateTensorDescriptor(&out_desc));
+          |CUDNN_CALL(cudnnSetTensor4dDescriptor(
+          |    out_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
+          |    """.stripMargin, res.shape(0), ", ", res.shape(1), ", ", res.shape(2), ", ", res.shape(3), s"""));
+          |
+          |cudnnConvolutionDescriptor_t conv_desc;
+          |CUDNN_CALL(cudnnCreateConvolutionDescriptor(&conv_desc));
+          |CUDNN_CALL(cudnnSetConvolution2dDescriptor(
+          |    conv_desc,
+          |    ${padding._1}, ${padding._2}, ${strides._1}, ${strides._2}, ${dilations._1}, ${dilations._2},
+          |    CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT));
+          |""".stripMargin) ++
+        cudnnMathType.map(mathType => Seq(s"CUDNN_CALL(cudnnSetConvolutionMathType(conv_desc, $mathType));")).getOrElse(Seq()) ++
+        Seq("""
+          |// Algorithm.
+          |cudnnConvolutionFwdAlgo_t algo;
+          |CUDNN_CALL(cudnnGetConvolutionForwardAlgorithm(
+          |    cudnnHandle,
+          |    in_desc, filt_desc, conv_desc, out_desc,
+          |    CUDNN_CONVOLUTION_FWD_PREFER_FASTEST, 0, &algo));
+          |
+          |// Workspace.
+          |size_t ws_size;
+          |CUDNN_CALL(cudnnGetConvolutionForwardWorkspaceSize(
+          |    cudnnHandle, in_desc, filt_desc, conv_desc, out_desc, algo, &ws_size));
+          |void *ws_data = myGpuMalloc(ws_size);
+          |""".stripMargin) ++
+        Seq(
+          "// Execute convolution.\n" +
+          "CUDNN_CALL(cudnnConvolutionForward(\n" +
+          "    cudnnHandle,\n" +
+          "    ", one, ", in_desc, ", input.data, ", filt_desc, ", filter.data, ",\n" +
+          "    conv_desc, algo, ws_data, ws_size,\n" +
+          "    ", zero, ", out_desc, ", res.data, "));\n" +
           "}"): _*
       )
     }
@@ -5413,6 +5561,7 @@ trait TensorDslCudnn extends TensorDslCublas {
       val reserveSpaceSize = unchecked[Int]("0")
 
       unchecked[Unit](
+        /*
         Seq(s"""
           |{
           |size_t dropoutStateSize;
@@ -5432,6 +5581,11 @@ trait TensorDslCudnn extends TensorDslCublas {
           |    dropout_desc, CUDNN_LINEAR_INPUT, ${if(bidirectional) "CUDNN_BIDIRECTIONAL" else "CUDNN_UNIDIRECTIONAL"},
           |    ${mode.toString}, CUDNN_RNN_ALGO_STANDARD, CUDNN_DATA_FLOAT));
           |""".stripMargin) ++
+        */
+        Seq(s"""
+          |{
+          |cudnnRNNDescriptor_t rnn_desc = ${rnnDescriptor(mode, numLayers, hiddenSize, dropout, bidirectional)};
+          |""".stripMargin) ++
         cudnnMathType.map(mathType => Seq(s"CUDNN_CALL(cudnnSetRNNMatrixMathType(rnn_desc, $mathType));")).getOrElse(Seq()) ++
           Seq("""
           |int32_t seqLength = """.stripMargin, seqLength, s""";
@@ -5439,25 +5593,28 @@ trait TensorDslCudnn extends TensorDslCublas {
           |int32_t inputSize = """.stripMargin, inputSize, s""";
           |
           |cudnnTensorDescriptor_t x_descs[seqLength];
-          |cudnnTensorDescriptor_t x_desc;
-          |CUDNN_CALL(cudnnCreateTensorDescriptor(&x_desc));
-          |int x_dims[] = {batchSize, inputSize, 1};
-          |int x_strides[] = {x_dims[1] * x_dims[2], x_dims[2], 1};
-          |CUDNN_CALL(cudnnSetTensorNdDescriptor(
-          |    x_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, x_dims, x_strides));
+          |cudnnTensorDescriptor_t x_desc = ${tensorDescriptor(Seq[Rep[Int]](batchSize, inputSize, 1))};
+          |// cudnnTensorDescriptor_t x_desc;
+          |// CUDNN_CALL(cudnnCreateTensorDescriptor(&x_desc));
+          |// int x_dims[] = {batchSize, inputSize, 1};
+          |// int x_strides[] = {x_dims[1] * x_dims[2], x_dims[2], 1};
+          |// CUDNN_CALL(cudnnSetTensorNdDescriptor(
+          |//     x_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, x_dims, x_strides));
           |for (int i = 0; i < seqLength; i++) {
           |  x_descs[i] = x_desc;
+          |//   x_descs[i] = ${tensorDescriptor(Seq[Rep[Int]](batchSize, inputSize, 1))};
           |}
           |
           |// The first dimension of the tensor depends on the direction argument passed to the cudnnSetRNNDescriptor call used to initialize rnnDesc.
           |// The second dimension must match the first dimension of the tensors described in xDesc.
           |// The third dimension must match the hiddenSize argument passed to the cudnnSetRNNDescriptor call used to initialize rnnDesc.
-          |cudnnTensorDescriptor_t hx_desc;
-          |CUDNN_CALL(cudnnCreateTensorDescriptor(&hx_desc));
-          |int hx_dims[] = {${numLayers * numDirections}, batchSize, $hiddenSize};
-          |int hx_strides[] = {hx_dims[1] * hx_dims[2], hx_dims[2], 1};
-          |CUDNN_CALL(cudnnSetTensorNdDescriptor(
-          |    hx_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, hx_dims, hx_strides));
+          |cudnnTensorDescriptor_t hx_desc = ${tensorDescriptor(Seq[Rep[Int]](numLayers * numDirections, batchSize, hiddenSize))};
+          |// cudnnTensorDescriptor_t hx_desc;
+          |// CUDNN_CALL(cudnnCreateTensorDescriptor(&hx_desc));
+          |// int hx_dims[] = {${numLayers * numDirections}, batchSize, $hiddenSize};
+          |// int hx_strides[] = {hx_dims[1] * hx_dims[2], hx_dims[2], 1};
+          |// CUDNN_CALL(cudnnSetTensorNdDescriptor(
+          |//     hx_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, hx_dims, hx_strides));
           |
           |cudnnTensorDescriptor_t cx_desc = hx_desc;
           |
@@ -5473,12 +5630,13 @@ trait TensorDslCudnn extends TensorDslCublas {
           |    w_desc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, /*nbDims*/ 3, w_dims));
           |
           |cudnnTensorDescriptor_t y_descs[seqLength];
-          |cudnnTensorDescriptor_t y_desc;
-          |CUDNN_CALL(cudnnCreateTensorDescriptor(&y_desc));
-          |int y_dims[] = {batchSize, ${hiddenSize * numDirections}, 1};
-          |int y_strides[] = {y_dims[1] * y_dims[2], y_dims[2], 1};
-          |CUDNN_CALL(cudnnSetTensorNdDescriptor(
-          |    y_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, y_dims, y_strides));
+          |cudnnTensorDescriptor_t y_desc = ${tensorDescriptor(Seq[Rep[Int]](batchSize, hiddenSize * numDirections, 1))};
+          |// cudnnTensorDescriptor_t y_desc;
+          |// CUDNN_CALL(cudnnCreateTensorDescriptor(&y_desc));
+          |// int y_dims[] = {batchSize, ${hiddenSize * numDirections}, 1};
+          |// int y_strides[] = {y_dims[1] * y_dims[2], y_dims[2], 1};
+          |// CUDNN_CALL(cudnnSetTensorNdDescriptor(
+          |//     y_desc, CUDNN_DATA_FLOAT, /*nbDims*/ 3, y_dims, y_strides));
           |for (int i = 0; i < seqLength; i++) {
           |  y_descs[i] = y_desc;
           |}
